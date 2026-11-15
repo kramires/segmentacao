@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "segmentacao", "runtimeExecutable": "uv", "runtimeArgs": ["run", "uvicorn", "segmentacao.servidor:app", "--port", "7860"], "port": 7860}
+  ]
+}

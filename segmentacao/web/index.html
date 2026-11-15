@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Segmentação</title>
+<!-- Spectra Design System: mesmo Tailwind, mesma configuração e mesma fonte do catálogo. -->
+<script src="/ds/assets/overview/assets/cdn.tailwindcss.com/3.4.17.js"></script>
+<script src="/ds/assets/overview/assets/spectra.aura.build/tailwind-config.js"></script>
+<link rel="stylesheet" href="/ds/assets/overview/assets/fonts.googleapis.com/css2__q8921a011.css">
+<link rel="stylesheet" href="/ds/assets/overview/assets/spectra.aura.build/spectra.css">
+<style>
+  .font-dm-sans { font-family: 'DM Sans', sans-serif !important; }
+  /* Poço + segmento selecionado (Billing toggle do Spectra). */
+  .seg { color: #62a386; transition: all .3s; border: 1px solid transparent; }
+  .seg:hover { color: #fff; }
+  .seg[aria-pressed="true"] {
+    background: #224437; color: #fff; border-color: rgb(255 255 255 / .05);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / .2);
+  }
+  input[type="range"] { accent-color: #34d399; }
+  .xadrez {
+    background-color: #12241e;
+    background-image:
+      linear-gradient(45deg, rgb(255 255 255 / .05) 25%, transparent 25%, transparent 75%, rgb(255 255 255 / .05) 75%),
+      linear-gradient(45deg, rgb(255 255 255 / .05) 25%, transparent 25%, transparent 75%, rgb(255 255 255 / .05) 75%);
+    background-size: 20px 20px; background-position: 0 0, 10px 10px;
+  }
+  canvas { touch-action: none; display: block; width: 100%; height: 100%; }
+  kbd {
+    font: 700 10px ui-monospace, monospace; color: #62a386; background: rgb(255 255 255 / .05);
+    border: 1px solid rgb(255 255 255 / .05); padding: 1px 5px; border-radius: 4px;
+  }
+</style>
+</head>
+<body class="antialiased bg-forest-950 text-white selection:bg-emerald-200 selection:text-emerald-900 min-h-screen font-sans">
+
+<!-- Brilho do topo (Closing band · top glow) -->
+<div class="pointer-events-none fixed inset-x-0 top-0 h-[28rem] bg-[radial-gradient(60rem_24rem_at_50%_-6rem,rgb(16_185_129/0.14),transparent_70%)]"></div>
+
+<header class="relative z-10 border-b border-white/10 bg-black/40 backdrop-blur-xl">
+  <div class="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+      <span class="font-dm-sans text-xl font-light tracking-tighter">Segmentação</span>
+    </div>
+    <nav class="flex items-center gap-8 text-sm font-medium uppercase">
+      <button data-vista="editor" class="nav text-white transition-colors duration-200">Editor</button>
+      <button data-vista="colagem" class="nav text-white/70 hover:text-white transition-colors duration-200">Colagem</button>
+    </nav>
+    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/30 backdrop-blur-md border border-white/10">
+      <span id="status-ponto" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+      <span id="status-texto" class="text-[10px] uppercase tracking-widest font-medium text-forest-300">Pronto</span>
+    </div>
+  </div>
+</header>
+
+<main class="relative z-10 max-w-[1500px] mx-auto px-6 pb-16">
+
+  <!-- ============ EDITOR ============ -->
+  <section id="vista-editor">
+    <div class="pt-10 pb-8">
+      <div class="flex items-center gap-3 mb-5">
+        <span class="text-xs font-mono font-bold tracking-widest text-emerald-400 bg-emerald-900/30 px-2 py-1 rounded">01</span>
+        <span class="h-px w-8 bg-forest-600"></span>
+        <span class="text-xs font-medium uppercase tracking-widest text-forest-400">SAM 2.1 · LaMa</span>
+      </div>
+      <h1 class="font-dm-sans font-light tracking-tighter leading-[0.95] text-4xl md:text-6xl">
+        Selecione, <span class="text-emerald-400">remova</span> ou recorte.
+      </h1>
+      <p class="mt-4 max-w-2xl text-base tracking-wide text-forest-300 leading-relaxed">
+        Marque o objeto com uma caixa ou um clique. Dê zoom e acerte a borda com o pincel até ficar exato.
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+      <!-- Tela de edição -->
+      <div class="xl:col-span-8 bg-forest-900/20 border border-white/5 rounded-3xl p-4 md:p-5 transition-colors duration-500 hover:border-emerald-500/30">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <div id="ferramentas" class="inline-flex gap-1 p-1.5 bg-forest-900/50 backdrop-blur-sm rounded-full border border-white/10">
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="mover" title="Mover a imagem (M)">Mover</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="caixa" title="Desenhar caixa (C)">Caixa</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="mais" title="Clique para incluir (A)">Ponto +</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="menos" title="Clique para excluir (S)">Ponto −</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="pincel" title="Pintar seleção (P)">Pincel</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="borracha" title="Apagar seleção (E)">Borracha</button>
+          </div>
+          <label id="grupo-pincel" class="invisible flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-forest-400">
+            Tamanho
+            <input id="raio" type="range" min="2" max="120" value="18" class="w-28">
+          </label>
+          <div class="ml-auto flex items-center gap-2">
+            <button id="btn-desfazer" class="px-4 py-2 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300 disabled:opacity-30 disabled:pointer-events-none" title="Desfazer (⌘Z)">Desfazer</button>
+            <button id="btn-limpar" class="px-4 py-2 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Limpar</button>
+          </div>
+        </div>
+
+        <div id="palco" class="relative h-[62vh] min-h-[420px] rounded-2xl overflow-hidden bg-black/30 border border-white/10">
+          <canvas id="tela"></canvas>
+
+          <!-- Controles de zoom (pílula sobre mídia) -->
+          <div id="zoom" class="hidden absolute bottom-3 right-3 items-center gap-1 px-2 py-1.5 rounded-full bg-forest-950/90 backdrop-blur-md border border-white/10">
+            <button data-zoom="-" class="w-7 h-7 rounded-full hover:bg-white/10 text-lg leading-none" title="Afastar">−</button>
+            <span id="zoom-valor" class="w-14 text-center text-xs font-mono text-forest-300">100%</span>
+            <button data-zoom="+" class="w-7 h-7 rounded-full hover:bg-white/10 text-lg leading-none" title="Aproximar">+</button>
+            <span class="w-px h-4 bg-white/10 mx-1"></span>
+            <button data-zoom="1" class="px-2 h-7 rounded-full hover:bg-white/10 text-[10px] font-mono font-bold tracking-wider" title="Tamanho real (1)">1:1</button>
+            <button data-zoom="0" class="px-2 h-7 rounded-full hover:bg-white/10 text-[10px] uppercase tracking-wider font-medium" title="Ajustar à tela (0)">Ajustar</button>
+          </div>
+          <label id="ver-mascara" class="hidden absolute bottom-3 left-3 items-center gap-2 px-3 py-2 rounded-full bg-forest-950/90 backdrop-blur-md border border-white/10 text-[10px] uppercase tracking-widest font-medium text-forest-300 cursor-pointer">
+            <input id="chk-mascara" type="checkbox" checked class="accent-emerald-400"> Mostrar seleção
+          </label>
+
+          <!-- Estado vazio -->
+          <div id="vazio" class="absolute inset-0 flex flex-col items-center justify-center gap-5 p-6 text-center">
+            <div class="w-12 h-12 rounded-full bg-white/5 border border-white/20 flex items-center justify-center">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 20h16"/></svg>
+            </div>
+            <div>
+              <p class="font-dm-sans font-light text-2xl tracking-tight">Solte uma imagem aqui</p>
+              <p class="mt-1 text-sm text-forest-400">ou cole com <kbd>⌘V</kbd></p>
+            </div>
+            <button id="btn-enviar" class="px-8 py-3 bg-white text-forest-950 rounded-full font-medium text-sm hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)]">Escolher arquivo</button>
+            <input id="arquivo" type="file" accept="image/*" class="hidden">
+            <div id="exemplos" class="flex flex-wrap justify-center gap-3 mt-2"></div>
+          </div>
+        </div>
+
+        <p id="dica" class="mt-3 text-xs font-mono text-forest-400 min-h-[1rem]"></p>
+      </div>
+
+      <!-- Painel lateral -->
+      <aside class="xl:col-span-4 flex flex-col gap-5">
+        <div class="bg-forest-900/20 border border-white/5 rounded-3xl p-5 md:p-6">
+          <p class="text-xs font-medium uppercase tracking-widest text-forest-400 mb-3">Operação</p>
+          <div id="operacoes" class="inline-flex gap-1 p-1.5 bg-forest-900/50 backdrop-blur-sm rounded-full border border-white/10">
+            <button class="seg rounded-full px-6 py-2 text-sm font-medium" data-operacao="remover" aria-pressed="true">Remover</button>
+            <button class="seg rounded-full px-6 py-2 text-sm font-medium" data-operacao="recortar" aria-pressed="false">Recortar</button>
+          </div>
+
+          <label class="block mt-6">
+            <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+              Expandir seleção <span id="expandir-valor" class="font-mono text-forest-300 normal-case">0 px</span>
+            </span>
+            <input id="expandir" type="range" min="0" max="40" value="0" class="w-full mt-2">
+          </label>
+          <label id="grupo-suavizar" class="hidden mt-5">
+            <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+              Suavizar borda <span id="suavizar-valor" class="font-mono text-forest-300 normal-case">1 px</span>
+            </span>
+            <input id="suavizar" type="range" min="0" max="6" value="1" class="w-full mt-2">
+          </label>
+
+          <button id="btn-processar" class="mt-6 w-full shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all duration-300 font-medium text-emerald-950 bg-gradient-to-r from-[#d1fae5] to-[#34d399] rounded-xl py-4 disabled:opacity-40 disabled:pointer-events-none" disabled>Processar</button>
+          <button id="btn-trocar" class="hidden mt-3 w-full py-3 rounded-xl border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Trocar imagem</button>
+        </div>
+
+        <div id="cartao-resultado" class="hidden bg-forest-900/20 border border-white/5 rounded-3xl p-5 md:p-6">
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-xs font-medium uppercase tracking-widest text-forest-400">Resultado</p>
+            <span id="resultado-tag" class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded"></span>
+          </div>
+          <!-- Antes / depois -->
+          <div id="comparador" class="hidden relative rounded-2xl overflow-hidden border border-white/10 select-none">
+            <img id="cmp-depois" class="block w-full" alt="Depois">
+            <img id="cmp-antes" class="absolute inset-0 w-full h-full" alt="Antes">
+            <div id="cmp-linha" class="absolute inset-y-0 w-px bg-white/80 pointer-events-none"></div>
+            <span class="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-[10px] uppercase tracking-wider">Antes</span>
+            <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-[10px] uppercase tracking-wider">Depois</span>
+            <input id="cmp-range" type="range" min="0" max="100" value="50" class="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize" aria-label="Comparar antes e depois">
+          </div>
+          <div id="quadro-recorte" class="hidden xadrez rounded-2xl border border-white/10 p-4 flex items-center justify-center">
+            <img id="img-recorte" class="max-h-72 max-w-full" alt="Recorte">
+          </div>
+          <div class="mt-4 grid grid-cols-2 gap-3">
+            <a id="btn-baixar" download class="text-center py-3 bg-white text-forest-950 rounded-full font-medium text-sm hover:scale-105 transition-transform duration-300">Baixar PNG</a>
+            <button id="btn-seguir" class="py-3 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300"></button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ COLAGEM ============ -->
+  <section id="vista-colagem" class="hidden">
+    <div class="pt-10 pb-8">
+      <div class="flex items-center gap-3 mb-5">
+        <span class="text-xs font-mono font-bold tracking-widest text-emerald-400 bg-emerald-900/30 px-2 py-1 rounded">02</span>
+        <span class="h-px w-8 bg-forest-600"></span>
+        <span class="text-xs font-medium uppercase tracking-widest text-forest-400">Colagem</span>
+      </div>
+      <h1 class="font-dm-sans font-light tracking-tighter leading-[0.95] text-4xl md:text-6xl">
+        Cole o recorte em <span class="text-emerald-400">outro fundo</span>.
+      </h1>
+      <p class="mt-4 max-w-2xl text-base tracking-wide text-forest-300 leading-relaxed">
+        Arraste o recorte para posicionar e use a roda do mouse ou o controle para mudar o tamanho.
+      </p>
+    </div>
+    <div class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+      <div class="xl:col-span-8 bg-forest-900/20 border border-white/5 rounded-3xl p-4 md:p-5">
+        <div id="palco-colagem" class="relative h-[62vh] min-h-[420px] rounded-2xl overflow-hidden bg-black/30 border border-white/10">
+          <canvas id="tela-colagem"></canvas>
+          <div id="vazio-colagem" class="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center">
+            <p id="msg-colagem" class="font-dm-sans font-light text-2xl tracking-tight"></p>
+            <button id="btn-fundo" class="px-8 py-3 bg-white text-forest-950 rounded-full font-medium text-sm hover:scale-105 transition-transform duration-300">Escolher fundo</button>
+            <input id="arquivo-fundo" type="file" accept="image/*" class="hidden">
+          </div>
+        </div>
+      </div>
+      <aside class="xl:col-span-4">
+        <div class="bg-forest-900/20 border border-white/5 rounded-3xl p-5 md:p-6">
+          <p class="text-xs font-medium uppercase tracking-widest text-forest-400 mb-3">Recorte atual</p>
+          <div class="xadrez rounded-2xl border border-white/10 p-3 h-40 flex items-center justify-center">
+            <img id="mini-recorte" class="max-h-full max-w-full hidden" alt="Recorte">
+            <span id="sem-recorte" class="text-sm text-forest-400">Faça um recorte no Editor primeiro.</span>
+          </div>
+          <label class="block mt-6">
+            <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+              Tamanho <span id="escala-valor" class="font-mono text-forest-300 normal-case">100%</span>
+            </span>
+            <input id="escala" type="range" min="5" max="300" value="100" class="w-full mt-2">
+          </label>
+          <button id="btn-baixar-colagem" class="mt-6 w-full shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all duration-300 font-medium text-emerald-950 bg-gradient-to-r from-[#d1fae5] to-[#34d399] rounded-xl py-4 disabled:opacity-40 disabled:pointer-events-none" disabled>Baixar colagem</button>
+          <button id="btn-trocar-fundo" class="mt-3 w-full py-3 rounded-xl border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Trocar fundo</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<!-- Aviso -->
+<div id="aviso" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-forest-950/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-sm text-forest-100"></div>
+
+<script src="/web/app.js"></script>
+</body>
+</html>
