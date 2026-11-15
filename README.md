@@ -42,3 +42,7 @@ uv run pytest
 | `⌘Z` | Desfazer |
 
 Para trocar o modelo de segmentação, defina `SEGMENTACAO_SAM` (ex.: `facebook/sam2.1-hiera-base-plus`).
+
+## Licença
+
+O código deste projeto está sob a [licença MIT](LICENSE). A pasta `spectra-design-system/` e os modelos baixados (SAM 2.1 e LaMa) são de terceiros e seguem as licenças dos respectivos autores.
