@@ -10,6 +10,7 @@ import numpy as np
 from . import operacoes as ops
 
 Segmentar = Callable[[np.ndarray, list, list], np.ndarray]
+Destacar = Callable[[np.ndarray], np.ndarray]
 LIMITE_DESFAZER = 15
 
 
@@ -49,7 +50,9 @@ class Sessao:
             float(np.clip(y, 0, self.altura - 1)),
         )
 
-    def aplicar(self, acao: dict, segmentar: Segmentar) -> None:
+    def aplicar(
+        self, acao: dict, segmentar: Segmentar | None, destacar: Destacar | None = None
+    ) -> None:
         """Aplica uma ação vinda do editor e atualiza a máscara."""
         tipo = acao.get("tipo")
         if tipo == "desfazer":
@@ -77,6 +80,20 @@ class Sessao:
                 return
             self._guardar()
             self._pintar(pts, float(acao["raio"]), incluir=acao["modo"] == "mais")
+        elif tipo == "assunto":
+            achado = destacar(self.img)
+            if not achado.any():
+                raise ValueError("não encontrei um assunto claro nessa imagem")
+            self._guardar()
+            self._garantir_pintura()
+            self.mais |= achado
+            self.menos &= ~achado
+        elif tipo == "inverter":
+            atual = self._base()
+            self._guardar()
+            # A seleção invertida deixa de corresponder às caixas e pontos: vira pintura.
+            self.caixas, self.pontos, self.sam = [], [], None
+            self.mais, self.menos = ~atual, np.zeros_like(atual)
         else:
             raise ValueError(f"Ação desconhecida: {tipo!r}")
         self.versao += 1
@@ -90,19 +107,26 @@ class Sessao:
         for p in (pts[0], pts[-1]):
             cv2.circle(traco, (int(p[0]), int(p[1])), raio, 255, -1)
         traco = traco > 0
-        if self.mais is None:
-            self.mais = np.zeros_like(traco)
-            self.menos = np.zeros_like(traco)
+        self._garantir_pintura()
         alvo, outro = (self.mais, self.menos) if incluir else (self.menos, self.mais)
         alvo |= traco
         outro &= ~traco
 
-    def mascara(self) -> np.ndarray:
-        """Máscara final (uint8 0/255): modelo + pintura − borracha, com a expansão."""
+    def _garantir_pintura(self):
+        if self.mais is None:
+            self.mais = np.zeros((self.altura, self.largura), dtype=bool)
+            self.menos = np.zeros((self.altura, self.largura), dtype=bool)
+
+    def _base(self) -> np.ndarray:
+        """Seleção booleana antes do ajuste de borda: modelo + pintura − borracha."""
         m = np.zeros((self.altura, self.largura), dtype=bool) if self.sam is None else self.sam
         if self.mais is not None:
             m = (m | self.mais) & ~self.menos
-        return ops.expandir_mascara(m.astype(np.uint8) * 255, self.expandir)
+        return m
+
+    def mascara(self) -> np.ndarray:
+        """Máscara final (uint8 0/255), com a borda expandida ou encolhida."""
+        return ops.expandir_mascara(self._base().astype(np.uint8) * 255, self.expandir)
 
     @property
     def vazia(self) -> bool:

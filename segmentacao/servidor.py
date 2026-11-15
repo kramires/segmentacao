@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 from . import operacoes as ops
-from .modelos import RAIZ, inpainter, segmentador
+from .modelos import RAIZ, destacador, inpainter, segmentador
 from .sessao import Sessao
 
 WEB = Path(__file__).resolve().parent / "web"
@@ -83,12 +83,22 @@ def _ler_imagem(dados: bytes) -> np.ndarray:
     return ops.para_rgb(pil)
 
 
-def _png(arr: np.ndarray, compressao: int = 3) -> Response:
+FORMATOS = {
+    "png": (".png", "image/png", [cv2.IMWRITE_PNG_COMPRESSION, 3]),
+    "webp": (".webp", "image/webp", [cv2.IMWRITE_WEBP_QUALITY, 95]),
+    "jpeg": (".jpg", "image/jpeg", [cv2.IMWRITE_JPEG_QUALITY, 95]),
+}
+
+
+def _codificar(arr: np.ndarray, formato: str = "png") -> Response:
+    if formato not in FORMATOS:
+        raise HTTPException(400, "Formato desconhecido. Use png, webp ou jpeg.")
+    extensao, tipo, opcoes = FORMATOS[formato]
+    if formato == "jpeg":
+        arr = ops.para_rgb(arr)  # JPEG não tem transparência: fundo branco
     conv = cv2.COLOR_RGBA2BGRA if arr.shape[2] == 4 else cv2.COLOR_RGB2BGR
-    _, buf = cv2.imencode(
-        ".png", cv2.cvtColor(arr, conv), [cv2.IMWRITE_PNG_COMPRESSION, compressao]
-    )
-    return Response(buf.tobytes(), media_type="image/png", headers={"Cache-Control": "no-store"})
+    _, buf = cv2.imencode(extensao, cv2.cvtColor(arr, conv), opcoes)
+    return Response(buf.tobytes(), media_type=tipo, headers={"Cache-Control": "no-store"})
 
 
 # ---------- API ----------
@@ -114,6 +124,8 @@ class Expandir(BaseModel):
 
 class Recortar(BaseModel):
     suavizar: int = 1
+    fundo: str = "transparente"  # transparente | cor | desfoque
+    cor: str = "#ffffff"
 
 
 @app.get("/api/exemplos")
@@ -167,7 +179,7 @@ def mascara(sid: str):
 def acao(sid: str, corpo: Acao) -> dict:
     s = _sessao(sid)
     try:
-        s.aplicar(corpo.model_dump(exclude_none=True), segmentador.mascara)
+        s.aplicar(corpo.model_dump(exclude_none=True), segmentador.mascara, destacador.mascara)
     except (KeyError, ValueError) as erro:
         raise HTTPException(400, f"Ação inválida: {erro}") from erro
     return _estado(s)
@@ -176,7 +188,7 @@ def acao(sid: str, corpo: Acao) -> dict:
 @app.post("/api/sessoes/{sid}/expandir")
 def expandir(sid: str, corpo: Expandir) -> dict:
     s = _sessao(sid)
-    s.expandir = int(np.clip(corpo.px, 0, 80))
+    s.expandir = int(np.clip(corpo.px, -80, 80))
     return _estado(s)
 
 
@@ -196,31 +208,52 @@ def remover(sid: str) -> dict:
 
 
 @app.get("/api/sessoes/{sid}/resultado")
-def resultado(sid: str):
+def resultado(sid: str, formato: str = "png"):
     s = _sessao(sid)
     if "resultado" not in s.saidas:
         raise HTTPException(404, "Ainda não há resultado.")
-    return _png(s.saidas["resultado"])
+    return _codificar(s.saidas["resultado"], formato)
+
+
+def _cor(texto: str) -> tuple[int, int, int]:
+    texto = texto.lstrip("#")
+    try:
+        if len(texto) != 6:
+            raise ValueError
+        return tuple(int(texto[i : i + 2], 16) for i in (0, 2, 4))
+    except ValueError as erro:
+        raise HTTPException(400, "Cor inválida. Use o formato #rrggbb.") from erro
 
 
 @app.post("/api/sessoes/{sid}/recortar")
 def recortar(sid: str, corpo: Recortar) -> dict:
     s = _sessao(sid)
-    rec = ops.recortar(s.img, _mascara_ou_erro(s), suavizar=int(np.clip(corpo.suavizar, 0, 8)))
-    s.saidas["recorte"] = rec
-    return {
-        "url": f"/api/sessoes/{sid}/recorte?v={s.versao}-{s.expandir}-{corpo.suavizar}",
-        "largura": rec.shape[1],
-        "altura": rec.shape[0],
-    }
+    m = _mascara_ou_erro(s)
+    suavizar = int(np.clip(corpo.suavizar, 0, 8))
+    marca = f"{s.versao}-{s.expandir}-{suavizar}-{corpo.fundo}-{corpo.cor.lstrip('#')}"
+    if corpo.fundo == "transparente":
+        rec = ops.recortar(s.img, m, suavizar=suavizar)
+        s.saidas["recorte"] = rec
+        return {
+            "tipo": "recorte",
+            "url": f"/api/sessoes/{sid}/recorte?v={marca}",
+            "largura": rec.shape[1],
+            "altura": rec.shape[0],
+        }
+    if corpo.fundo not in ("cor", "desfoque"):
+        raise HTTPException(400, "Fundo desconhecido.")
+    cor = _cor(corpo.cor) if corpo.fundo == "cor" else None
+    # Imagem inteira com o fundo trocado: entra como resultado, igual à remoção.
+    s.saidas["resultado"] = ops.trocar_fundo(s.img, m, cor=cor, suavizar=suavizar)
+    return {"tipo": "quadro", "url": f"/api/sessoes/{sid}/resultado?v={marca}"}
 
 
 @app.get("/api/sessoes/{sid}/recorte")
-def recorte(sid: str):
+def recorte(sid: str, formato: str = "png"):
     s = _sessao(sid)
     if "recorte" not in s.saidas:
         raise HTTPException(404, "Ainda não há recorte.")
-    return _png(s.saidas["recorte"])
+    return _codificar(s.saidas["recorte"], formato)
 
 
 @app.post("/api/sessoes/{sid}/continuar")

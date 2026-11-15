@@ -36,11 +36,12 @@ def _nucleo(raio: int) -> np.ndarray:
 
 
 def expandir_mascara(mascara: np.ndarray, raio: int) -> np.ndarray:
-    """Dilata a máscara em ``raio`` pixels (0 devolve a própria máscara binarizada)."""
+    """Dilata a máscara em ``raio`` pixels; raio negativo encolhe, 0 só binariza."""
     binaria = np.where(mascara > 127, 255, 0).astype(np.uint8)
-    if raio <= 0:
+    if raio == 0:
         return binaria
-    return cv2.dilate(binaria, _nucleo(raio))
+    operacao = cv2.dilate if raio > 0 else cv2.erode
+    return operacao(binaria, _nucleo(abs(raio)))
 
 
 def caixa_da_mascara(mascara: np.ndarray) -> tuple[int, int, int, int] | None:
@@ -51,21 +52,49 @@ def caixa_da_mascara(mascara: np.ndarray) -> tuple[int, int, int, int] | None:
     return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
 
 
-def recortar(img_rgb: np.ndarray, mascara: np.ndarray, suavizar: int = 1) -> np.ndarray | None:
-    """Devolve o objeto em RGBA, já aparado ao seu contorno.
-
-    ``suavizar`` é o raio (px) do antisserrilhado aplicado à borda do alfa.
-    """
-    caixa = caixa_da_mascara(mascara > 127)
-    if caixa is None:
-        return None
-    x1, y1, x2, y2 = caixa
+def _alfa(mascara: np.ndarray, suavizar: int) -> np.ndarray:
+    """Alfa uint8 com a borda antisserrilhada em ``suavizar`` pixels."""
     alfa = np.where(mascara > 127, 255, 0).astype(np.uint8)
     if suavizar > 0:
         k = 2 * suavizar + 1
         # Erodir antes de borrar evita vazar um halo do fundo para fora do objeto.
         alfa = cv2.GaussianBlur(cv2.erode(alfa, _nucleo(suavizar)), (k, k), 0)
-    return np.dstack([img_rgb[y1:y2, x1:x2], alfa[y1:y2, x1:x2]])
+    return alfa
+
+
+def recortar(img_rgb: np.ndarray, mascara: np.ndarray, suavizar: int = 1) -> np.ndarray | None:
+    """Devolve o objeto em RGBA, já aparado ao seu contorno."""
+    caixa = caixa_da_mascara(mascara > 127)
+    if caixa is None:
+        return None
+    x1, y1, x2, y2 = caixa
+    return np.dstack([img_rgb[y1:y2, x1:x2], _alfa(mascara, suavizar)[y1:y2, x1:x2]])
+
+
+def trocar_fundo(
+    img_rgb: np.ndarray,
+    mascara: np.ndarray,
+    cor: tuple[int, int, int] | None = None,
+    suavizar: int = 1,
+) -> np.ndarray:
+    """Mantém o objeto e troca o fundo: cor sólida, ou o próprio fundo desfocado se ``cor`` é None.
+
+    O resultado tem o tamanho da imagem original.
+    """
+    alfa = (_alfa(mascara, suavizar).astype(np.float32) / 255.0)[..., None]
+    if cor is not None:
+        fundo = np.empty_like(img_rgb, dtype=np.float32)
+        fundo[:] = cor
+    else:
+        # Desfoque só com pixels do fundo: sem isso o objeto "vaza" um halo colorido.
+        sigma = max(3.0, 0.012 * max(img_rgb.shape[:2]))
+        peso = (expandir_mascara(mascara, round(sigma / 2)) == 0).astype(np.float32)[..., None]
+        soma = cv2.GaussianBlur(img_rgb.astype(np.float32) * peso, (0, 0), sigma)
+        norma = cv2.GaussianBlur(peso, (0, 0), sigma)[..., None]
+        geral = cv2.GaussianBlur(img_rgb.astype(np.float32), (0, 0), sigma)
+        fundo = np.where(norma > 1e-3, soma / np.maximum(norma, 1e-3), geral)
+    saida = img_rgb.astype(np.float32) * alfa + fundo * (1.0 - alfa)
+    return np.clip(saida, 0, 255).round().astype(np.uint8)
 
 
 def remover(

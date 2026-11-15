@@ -36,6 +36,30 @@ def test_recortar_apara_ao_objeto():
     assert recorte[..., 3].min() == 255
 
 
+def test_expandir_mascara_nos_dois_sentidos():
+    m = _mascara_retangulo(100, 100, 40, 40, 60, 60)
+    area = lambda x: int((x > 0).sum())
+    assert area(ops.expandir_mascara(m, 5)) > area(m) > area(ops.expandir_mascara(m, -5)) > 0
+    assert (ops.expandir_mascara(m, 0) == m).all()
+
+
+def test_trocar_fundo_por_cor():
+    img = np.full((60, 80, 3), 90, dtype=np.uint8)
+    saida = ops.trocar_fundo(img, _mascara_retangulo(60, 80, 20, 10, 60, 50), (255, 0, 0), 0)
+    assert saida.shape == img.shape
+    assert tuple(saida[30, 40]) == (90, 90, 90), "o objeto fica intacto"
+    assert tuple(saida[2, 2]) == (255, 0, 0)
+
+
+def test_trocar_fundo_desfocado_nao_vaza_o_objeto():
+    img = np.zeros((200, 200, 3), dtype=np.uint8)  # fundo preto
+    img[80:120, 80:120] = 255  # objeto branco
+    saida = ops.trocar_fundo(img, _mascara_retangulo(200, 200, 80, 80, 120, 120), None, 0)
+    assert tuple(saida[100, 100]) == (255, 255, 255)
+    # Logo ao lado do objeto o fundo continua preto: sem halo branco.
+    assert saida[100, 130].max() < 8 and saida[100, 124].max() < 8
+
+
 def test_recortar_mascara_vazia():
     img = np.zeros((10, 10, 3), dtype=np.uint8)
     assert ops.recortar(img, np.zeros((10, 10), dtype=np.uint8)) is None

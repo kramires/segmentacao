@@ -3,6 +3,7 @@
 App local para segmentar objetos em fotos e, a partir da seleção, **remover**, **recortar** ou **colar** em outro fundo.
 
 - Segmentação: SAM 2.1 (Hiera Small), baixado do Hugging Face na primeira execução.
+- Selecionar assunto: U2-Net-p localiza os objetos e o SAM 2.1 faz a borda; baixado para `checkpoints/` na primeira execução.
 - Remoção: LaMa (big-lama), baixado para `checkpoints/` na primeira execução.
 
 ## Rodar
@@ -39,6 +40,7 @@ uv run pytest
 | `M` `C` `A` `S` `P` `E` | Mover, Caixa, Ponto +, Ponto −, Pincel, Borracha |
 | `[` `]` | Tamanho do pincel |
 | `0` / `1` | Ajustar à tela / tamanho real |
+| `I` | Inverter a seleção |
 | `⌘Z` | Desfazer |
 
 Para trocar o modelo de segmentação, defina `SEGMENTACAO_SAM` (ex.: `facebook/sam2.1-hiera-base-plus`).

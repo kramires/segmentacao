@@ -93,6 +93,50 @@ def test_expandir_aumenta_a_mascara(sessao):
     assert sessao.mascara()[27, 75] == 255
 
 
+def test_borda_negativa_encolhe(sessao):
+    sessao.aplicar({"tipo": "caixa", "x1": 50, "y1": 30, "x2": 100, "y2": 60}, _segmentar_falso)
+    antes = int((sessao.mascara() > 0).sum())
+    sessao.expandir = -5
+    m = sessao.mascara()
+    assert 0 < (m > 0).sum() < antes
+    assert m[31, 75] == 0 and m[45, 75] == 255
+
+
+def _destacar_falso(img):
+    m = np.zeros(img.shape[:2], dtype=bool)
+    m[40:60, 90:130] = True
+    return m
+
+
+def test_assunto_soma_a_selecao_e_pode_ser_desfeito(sessao):
+    sessao.aplicar({"tipo": "caixa", "x1": 10, "y1": 10, "x2": 30, "y2": 30}, _segmentar_falso)
+    sessao.aplicar({"tipo": "assunto"}, _segmentar_falso, _destacar_falso)
+    m = sessao.mascara()
+    assert m[50, 100] == 255 and m[20, 20] == 255
+    sessao.aplicar({"tipo": "desfazer"}, None)
+    assert sessao.mascara()[50, 100] == 0 and sessao.mascara()[20, 20] == 255
+
+
+def test_assunto_nao_encontrado(sessao):
+    vazio = lambda img: np.zeros(img.shape[:2], dtype=bool)
+    with pytest.raises(ValueError):
+        sessao.aplicar({"tipo": "assunto"}, None, vazio)
+    assert sessao.vazia and not sessao.historico
+
+
+def test_inverter_troca_a_selecao_e_volta(sessao):
+    sessao.aplicar({"tipo": "caixa", "x1": 20, "y1": 20, "x2": 80, "y2": 80}, _segmentar_falso)
+    original = sessao.mascara().copy()
+    sessao.aplicar({"tipo": "inverter"}, None)
+    assert (sessao.mascara() == 255 - original).all()
+    assert sessao.caixas == [], "as caixas deixam de valer depois de inverter"
+    sessao.aplicar({"tipo": "inverter"}, None)
+    assert (sessao.mascara() == original).all()
+    sessao.aplicar({"tipo": "desfazer"}, None)
+    sessao.aplicar({"tipo": "desfazer"}, None)
+    assert sessao.caixas and (sessao.mascara() == original).all()
+
+
 def test_acao_desconhecida(sessao):
     with pytest.raises(ValueError):
         sessao.aplicar({"tipo": "explodir"}, None)

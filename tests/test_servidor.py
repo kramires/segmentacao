@@ -30,7 +30,14 @@ def cliente(monkeypatch):
         return saida
 
     monkeypatch.setattr(servidor.segmentador, "mascara", segmentar)
+
+    def destacar(img):
+        m = np.zeros(img.shape[:2], dtype=bool)
+        m[30:50, 60:100] = True
+        return m
+
     monkeypatch.setattr(servidor.segmentador, "preparar", lambda img: None)
+    monkeypatch.setattr(servidor.destacador, "mascara", destacar)
     monkeypatch.setattr(servidor, "inpainter", inpaint)
     servidor._sessoes.clear()
     return TestClient(servidor.app)
@@ -81,6 +88,47 @@ def test_fluxo_recortar(cliente):
     r = cliente.post(f"{base}/recortar", json={"suavizar": 0}).json()
     assert (r["largura"], r["altura"]) == (40, 30)
     assert _imagem(cliente.get(r["url"])).shape == (30, 40, 4)
+
+
+def test_assunto_inverter_e_fundo(cliente):
+    s = _abrir(cliente)
+    base = f"/api/sessoes/{s['id']}"
+    s = cliente.post(f"{base}/acao", json={"tipo": "assunto"}).json()
+    assert _imagem(cliente.get(s["mascara"]))[40, 80, 3] == 255
+    s = cliente.post(f"{base}/acao", json={"tipo": "inverter"}).json()
+    m = _imagem(cliente.get(s["mascara"]))
+    assert m[40, 80, 3] == 0 and m[5, 5, 3] == 255
+    cliente.post(f"{base}/acao", json={"tipo": "desfazer"})
+
+    r = cliente.post(
+        f"{base}/recortar", json={"suavizar": 0, "fundo": "cor", "cor": "#0000ff"}
+    ).json()
+    assert r["tipo"] == "quadro"
+    quadro = _imagem(cliente.get(r["url"]))
+    assert quadro.shape == (80, 120, 3)
+    assert tuple(quadro[40, 80]) == (200, 50, 50) and tuple(quadro[5, 5]) == (0, 0, 255)
+    # Fundo trocado vale como resultado: dá para continuar editando a partir dele.
+    assert cliente.post(f"{base}/continuar").status_code == 200
+
+    assert cliente.post(f"{base}/recortar", json={"fundo": "desfoque"}).json()["tipo"] == "quadro"
+    assert cliente.post(f"{base}/recortar", json={"fundo": "cor", "cor": "azul"}).status_code == 400
+    assert cliente.post(f"{base}/recortar", json={"fundo": "xadrez"}).status_code == 400
+
+
+def test_formatos_de_exportacao(cliente):
+    s = _abrir(cliente)
+    base = f"/api/sessoes/{s['id']}"
+    cliente.post(f"{base}/acao", json={"tipo": "caixa", "x1": 10, "y1": 10, "x2": 50, "y2": 40})
+    url = cliente.post(f"{base}/recortar", json={"suavizar": 0}).json()["url"]
+    tipos = {"png": "image/png", "webp": "image/webp", "jpeg": "image/jpeg"}
+    for formato, tipo in tipos.items():
+        r = cliente.get(f"{url}&formato={formato}")
+        assert r.headers["content-type"] == tipo
+        img = Image.open(io.BytesIO(r.content))
+        assert img.size == (40, 30)
+        # O WebP descarta o canal alfa quando o recorte é todo opaco, como aqui.
+        assert img.mode == {"png": "RGBA", "jpeg": "RGB"}.get(formato, img.mode)
+    assert cliente.get(f"{url}&formato=bmp").status_code == 400
 
 
 def test_expandir_muda_a_url_da_mascara(cliente):

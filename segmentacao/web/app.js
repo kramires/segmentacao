@@ -70,6 +70,8 @@ const E = {
   cursor: null,
   espaco: false,
   operacao: 'remover',
+  fundo: 'transparente',
+  resultado: null,       // { url, nome } do último resultado, para baixar e copiar
   fila: Promise.resolve(),
   pedidoMascara: 0,
   ultimoRecorte: null,
@@ -193,6 +195,8 @@ async function aplicarEstado(estado, imagemNova) {
     encaixar();
   }
   $('#btn-desfazer').disabled = !estado.pode_desfazer;
+  $('#btn-assunto').disabled = false;
+  $('#btn-inverter').disabled = false;
   $('#btn-processar').disabled = !estado.mascara;
   const pedido = ++E.pedidoMascara;
   if (!estado.mascara) {
@@ -208,10 +212,10 @@ async function aplicarEstado(estado, imagemNova) {
 }
 
 /** Ações vão em fila: a ordem dos cliques é a ordem em que o servidor as aplica. */
-function acao(corpo) {
+function acao(corpo, texto) {
   if (!E.sessao) return;
   const id = E.sessao.id;
-  ocupado(+1);
+  ocupado(+1, texto);
   E.fila = E.fila
     .then(() => enviarJSON(`/api/sessoes/${id}/acao`, corpo))
     .then((estado) => { if (E.sessao && E.sessao.id === id) return aplicarEstado(estado, false); })
@@ -345,6 +349,8 @@ $('#raio').addEventListener('input', (ev) => { E.raioTela = +ev.target.value; de
 $('#chk-mascara').addEventListener('change', (ev) => { E.verMascara = ev.target.checked; desenhar(); });
 $('#btn-desfazer').addEventListener('click', () => acao({ tipo: 'desfazer' }));
 $('#btn-limpar').addEventListener('click', () => acao({ tipo: 'limpar' }));
+$('#btn-assunto').addEventListener('click', () => acao({ tipo: 'assunto' }, 'Procurando assunto'));
+$('#btn-inverter').addEventListener('click', () => acao({ tipo: 'inverter' }));
 
 const ATALHOS = { m: 'mover', c: 'caixa', a: 'mais', s: 'menos', p: 'pincel', e: 'borracha' };
 window.addEventListener('keydown', (ev) => {
@@ -354,6 +360,7 @@ window.addEventListener('keydown', (ev) => {
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
   if (ev.code === 'Space') { ev.preventDefault(); E.espaco = true; tela.style.cursor = 'grab'; desenhar(); }
   else if (ATALHOS[k]) escolherFerramenta(ATALHOS[k]);
+  else if (k === 'i') acao({ tipo: 'inverter' });
   else if (k === '0') encaixar();
   else if (k === '1') zoomEm(1 / E.escala);
   else if (k === '+' || k === '=') zoomEm(1.4);
@@ -373,14 +380,21 @@ $('#operacoes').addEventListener('click', (ev) => {
   E.operacao = b.dataset.operacao;
   $$('#operacoes [data-operacao]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
   const recortar = E.operacao === 'recortar';
-  $('#grupo-suavizar').classList.toggle('hidden', !recortar);
-  $('#grupo-suavizar').classList.toggle('block', recortar);
+  $('#grupo-recorte').classList.toggle('hidden', !recortar);
+});
+
+$('#fundos').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-fundo]');
+  if (!b) return;
+  E.fundo = b.dataset.fundo;
+  $$('#fundos [data-fundo]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  $('#cor-fundo').classList.toggle('hidden', E.fundo !== 'cor');
 });
 
 let relogioExpandir;
 $('#expandir').addEventListener('input', (ev) => {
   const px = +ev.target.value;
-  $('#expandir-valor').textContent = px + ' px';
+  $('#expandir-valor').textContent = (px > 0 ? '+' : '') + px + ' px';
   clearTimeout(relogioExpandir);
   relogioExpandir = setTimeout(() => {
     if (!E.sessao) return;
@@ -400,6 +414,26 @@ function posicionarComparador() {
 }
 $('#cmp-range').addEventListener('input', posicionarComparador);
 
+function atualizarDownload() {
+  if (!E.resultado) return;
+  const formato = $('#formato').value;
+  $('#btn-baixar').href = E.resultado.url + '&formato=' + formato;
+  $('#btn-baixar').download = E.resultado.nome + '.' + (formato === 'jpeg' ? 'jpg' : formato);
+}
+$('#formato').addEventListener('change', atualizarDownload);
+
+$('#btn-copiar').addEventListener('click', async () => {
+  if (!E.resultado) return;
+  try {
+    // A área de transferência só aceita PNG; a promessa mantém o gesto do clique válido no Safari.
+    const png = fetch(E.resultado.url).then((r) => r.blob());
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    avisar('Imagem copiada.');
+  } catch {
+    avisar('Não consegui copiar. Use o botão Baixar.');
+  }
+});
+
 $('#btn-processar').addEventListener('click', async () => {
   if (!E.sessao) return;
   const id = E.sessao.id, remover = E.operacao === 'remover';
@@ -410,13 +444,17 @@ $('#btn-processar').addEventListener('click', async () => {
     await E.fila; // garante que a última marcação já foi aplicada
     const r = remover
       ? await enviarJSON(`/api/sessoes/${id}/remover`)
-      : await enviarJSON(`/api/sessoes/${id}/recortar`, { suavizar: +$('#suavizar').value });
-    if (remover) {
+      : await enviarJSON(`/api/sessoes/${id}/recortar`, {
+        suavizar: +$('#suavizar').value, fundo: E.fundo, cor: $('#cor-fundo').value,
+      });
+    // "quadro" = imagem inteira (remoção ou fundo trocado); senão é o recorte transparente.
+    const quadro = remover || r.tipo === 'quadro';
+    if (quadro) {
       $('#cmp-antes').src = E.sessao.imagem;
       $('#cmp-depois').src = r.url;
       $('#cmp-range').value = 50; posicionarComparador();
       $('#btn-seguir').textContent = 'Continuar editando';
-      $('#resultado-tag').textContent = 'REMOVIDO';
+      $('#resultado-tag').textContent = remover ? 'REMOVIDO' : 'FUNDO TROCADO';
     } else {
       $('#img-recorte').src = r.url;
       E.ultimoRecorte = r;
@@ -424,11 +462,11 @@ $('#btn-processar').addEventListener('click', async () => {
       $('#btn-seguir').textContent = 'Usar na colagem';
       $('#resultado-tag').textContent = `${r.largura}×${r.altura}`;
     }
-    $('#comparador').classList.toggle('hidden', !remover);
-    $('#quadro-recorte').classList.toggle('hidden', remover);
-    $('#btn-baixar').href = r.url;
-    $('#btn-baixar').download = remover ? 'removido.png' : 'recorte.png';
-    $('#btn-seguir').dataset.modo = E.operacao;
+    $('#comparador').classList.toggle('hidden', !quadro);
+    $('#quadro-recorte').classList.toggle('hidden', quadro);
+    E.resultado = { url: r.url, nome: remover ? 'removido' : quadro ? 'fundo-trocado' : 'recorte' };
+    atualizarDownload();
+    $('#btn-seguir').dataset.modo = quadro ? 'continuar' : 'colagem';
     $('#cartao-resultado').classList.remove('hidden');
   } catch (erro) {
     avisar(erro.message);
@@ -439,13 +477,14 @@ $('#btn-processar').addEventListener('click', async () => {
 });
 
 $('#btn-seguir').addEventListener('click', (ev) => {
-  if (ev.currentTarget.dataset.modo === 'recortar') return mostrarVista('colagem');
+  if (ev.currentTarget.dataset.modo === 'colagem') return mostrarVista('colagem');
   abrirSessao(enviarJSON(`/api/sessoes/${E.sessao.id}/continuar`));
 });
 
 $('#btn-trocar').addEventListener('click', () => {
-  E.sessao = null; E.img = null; E.temMascara = false;
+  E.sessao = null; E.img = null; E.temMascara = false; E.resultado = null;
   $('#btn-processar').disabled = true;
+  $('#btn-assunto').disabled = true; $('#btn-inverter').disabled = true;
   $('#expandir').value = 0; $('#expandir-valor').textContent = '0 px';
   mostrarEditor(false);
   desenhar();

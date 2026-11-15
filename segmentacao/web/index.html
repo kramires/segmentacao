@@ -89,7 +89,9 @@
             Tamanho
             <input id="raio" type="range" min="2" max="120" value="18" class="w-28">
           </label>
-          <div class="ml-auto flex items-center gap-2">
+          <div class="ml-auto flex flex-wrap items-center gap-2">
+            <button id="btn-assunto" class="px-4 py-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium hover:bg-emerald-500 hover:text-emerald-950 transition-all duration-300 disabled:opacity-30 disabled:pointer-events-none" title="Seleciona sozinho o assunto principal da foto" disabled>Selecionar assunto</button>
+            <button id="btn-inverter" class="px-4 py-2 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300 disabled:opacity-30 disabled:pointer-events-none" title="Troca o que está selecionado pelo que não está (I)" disabled>Inverter</button>
             <button id="btn-desfazer" class="px-4 py-2 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300 disabled:opacity-30 disabled:pointer-events-none" title="Desfazer (⌘Z)">Desfazer</button>
             <button id="btn-limpar" class="px-4 py-2 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Limpar</button>
           </div>
@@ -140,16 +142,28 @@
 
           <label class="block mt-6">
             <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
-              Expandir seleção <span id="expandir-valor" class="font-mono text-forest-300 normal-case">0 px</span>
+              Ajustar borda <span id="expandir-valor" class="font-mono text-forest-300 normal-case">0 px</span>
             </span>
-            <input id="expandir" type="range" min="0" max="40" value="0" class="w-full mt-2">
+            <input id="expandir" type="range" min="-40" max="40" value="0" class="w-full mt-2">
+            <span class="flex justify-between mt-1 text-[10px] uppercase tracking-wider text-forest-500"><span>Encolher</span><span>Expandir</span></span>
           </label>
-          <label id="grupo-suavizar" class="hidden mt-5">
-            <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
-              Suavizar borda <span id="suavizar-valor" class="font-mono text-forest-300 normal-case">1 px</span>
-            </span>
-            <input id="suavizar" type="range" min="0" max="6" value="1" class="w-full mt-2">
-          </label>
+          <div id="grupo-recorte" class="hidden">
+            <label class="block mt-5">
+              <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+                Suavizar borda <span id="suavizar-valor" class="font-mono text-forest-300 normal-case">1 px</span>
+              </span>
+              <input id="suavizar" type="range" min="0" max="6" value="1" class="w-full mt-2">
+            </label>
+            <p class="mt-5 mb-3 text-xs font-medium uppercase tracking-widest text-forest-400">Fundo</p>
+            <div class="flex flex-wrap items-center gap-3">
+              <div id="fundos" class="inline-flex gap-1 p-1.5 bg-forest-900/50 backdrop-blur-sm rounded-full border border-white/10">
+                <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-fundo="transparente" aria-pressed="true">Transparente</button>
+                <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-fundo="cor" aria-pressed="false">Cor</button>
+                <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-fundo="desfoque" aria-pressed="false">Desfocado</button>
+              </div>
+              <input id="cor-fundo" type="color" value="#ffffff" class="hidden w-10 h-10 rounded-full bg-transparent border border-white/10 cursor-pointer" title="Cor do fundo">
+            </div>
+          </div>
 
           <button id="btn-processar" class="mt-6 w-full shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all duration-300 font-medium text-emerald-950 bg-gradient-to-r from-[#d1fae5] to-[#34d399] rounded-xl py-4 disabled:opacity-40 disabled:pointer-events-none" disabled>Processar</button>
           <button id="btn-trocar" class="hidden mt-3 w-full py-3 rounded-xl border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Trocar imagem</button>
@@ -172,8 +186,16 @@
           <div id="quadro-recorte" class="hidden xadrez rounded-2xl border border-white/10 p-4 flex items-center justify-center">
             <img id="img-recorte" class="max-h-72 max-w-full" alt="Recorte">
           </div>
-          <div class="mt-4 grid grid-cols-2 gap-3">
-            <a id="btn-baixar" download class="text-center py-3 bg-white text-forest-950 rounded-full font-medium text-sm hover:scale-105 transition-transform duration-300">Baixar PNG</a>
+          <div class="mt-4 flex gap-3">
+            <a id="btn-baixar" download class="flex-1 text-center py-3 bg-white text-forest-950 rounded-full font-medium text-sm hover:scale-105 transition-transform duration-300">Baixar</a>
+            <select id="formato" class="px-4 rounded-full bg-forest-900/50 border border-white/10 text-sm font-medium text-white cursor-pointer" title="Formato do arquivo">
+              <option value="png">PNG</option>
+              <option value="webp">WebP</option>
+              <option value="jpeg">JPEG</option>
+            </select>
+          </div>
+          <div class="mt-3 grid grid-cols-2 gap-3">
+            <button id="btn-copiar" class="py-3 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300" title="Copia a imagem para colar em outro app">Copiar</button>
             <button id="btn-seguir" class="py-3 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300"></button>
           </div>
         </div>
