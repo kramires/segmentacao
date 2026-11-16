@@ -12,6 +12,8 @@ import cv2
 import numpy as np
 import torch
 
+from . import operacoes as ops
+
 RAIZ = Path(__file__).resolve().parent.parent
 PASTA_PESOS = RAIZ / "checkpoints"
 
@@ -20,6 +22,11 @@ LAMA_URL = "https://github.com/Sanster/models/releases/download/add_big_lama/big
 U2NETP_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
 U2NETP_SHA256 = "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8"
 LAMA_SHA256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
+
+# Uma trava só para todos os modelos. O backend MPS do PyTorch não aguenta dois modelos
+# rodando ao mesmo tempo em threads diferentes: o servidor fica parado para sempre.
+# De quebra, evita que dois modelos disputem a pouca memória da máquina.
+TRAVA_GPU = threading.RLock()
 
 
 def dispositivo() -> torch.device:
@@ -55,7 +62,7 @@ class Segmentador:
         self.modelo_id = modelo_id
         self._preditor = None
         self._chave = None
-        self._trava = threading.Lock()
+        self._trava = TRAVA_GPU
 
     def _carregar(self):
         if self._preditor is None:
@@ -138,7 +145,7 @@ class Destacador:
         self.segmentador = segmentador
         self.caminho = caminho
         self._sessao = None
-        self._trava = threading.Lock()
+        self._trava = TRAVA_GPU
 
     def _saliencia(self, img_rgb: np.ndarray) -> np.ndarray:
         """Mapa 0..1 no tamanho da imagem."""
@@ -200,7 +207,7 @@ class Inpainter:
         self.caminho = caminho
         self._modelo = None
         self._disp = torch.device("cpu")
-        self._trava = threading.Lock()
+        self._trava = TRAVA_GPU
 
     def _carregar(self):
         if self._modelo is None:
@@ -238,6 +245,83 @@ class Inpainter:
         return saida[:altura, :largura]
 
 
+class Refinador:
+    """ViTMatte: recalcula a transparência da borda fio a fio (cabelo, pelos, penugem).
+
+    Recebe a máscara dura e devolve um alfa suave do tamanho da imagem. Só a
+    vizinhança do objeto passa pelo modelo, reduzida a ``LADO_MAX`` se preciso.
+    """
+
+    MODELO = os.environ.get("SEGMENTACAO_MATTING", "hustvl/vitmatte-small-composition-1k")
+    LADO_MAX = 1024
+
+    def __init__(self):
+        self._modelo = None
+        self._disp = torch.device("cpu")
+        self._trava = TRAVA_GPU
+
+    def _carregar(self):
+        if self._modelo is None:
+            from transformers import VitMatteForImageMatting
+
+            self._modelo = VitMatteForImageMatting.from_pretrained(self.MODELO).eval()
+            self._disp = dispositivo()
+            self._modelo.to(self._disp)
+        return self._modelo
+
+    def _inferir(self, img: np.ndarray, tri: np.ndarray) -> np.ndarray:
+        x = torch.from_numpy(img).permute(2, 0, 1).float().div(255).sub(0.5).div(0.5)
+        x = torch.cat([x, torch.from_numpy(tri)[None].float().div(255)])[None].to(self._disp)
+        return self._modelo(pixel_values=x).alphas[0, 0].float().clamp(0, 1).cpu().numpy()
+
+    def alfa(self, img_rgb: np.ndarray, mascara: np.ndarray) -> np.ndarray:
+        altura, largura = mascara.shape
+        caixa = ops.caixa_da_mascara(mascara > 127)
+        if caixa is None:
+            return np.zeros((altura, largura), dtype=np.uint8)
+        x1, y1, x2, y2 = caixa
+        # Faixa de dúvida proporcional ao objeto: larga o bastante para fios soltos.
+        faixa = int(np.clip(round(0.04 * max(x2 - x1, y2 - y1)), 4, 80))
+        tri = ops.trimapa(mascara, faixa)
+
+        margem = 2 * faixa
+        x1, y1 = max(0, x1 - margem), max(0, y1 - margem)
+        x2, y2 = min(largura, x2 + margem), min(altura, y2 + margem)
+        trecho, tri_trecho = img_rgb[y1:y2, x1:x2], tri[y1:y2, x1:x2]
+        th, tw = tri_trecho.shape
+        escala = min(1.0, self.LADO_MAX / max(th, tw))
+        tam = (max(32, round(tw * escala)), max(32, round(th * escala)))
+        img = cv2.resize(trecho, tam, interpolation=cv2.INTER_AREA) if escala < 1 else trecho
+        t = (
+            cv2.resize(tri_trecho, tam, interpolation=cv2.INTER_NEAREST)
+            if escala < 1
+            else tri_trecho
+        )
+        # A rede exige lados múltiplos de 32.
+        ph, pw = (-img.shape[0]) % 32, (-img.shape[1]) % 32
+        img_p = np.pad(img, ((0, ph), (0, pw), (0, 0)), mode="reflect")
+        t_p = np.pad(t, ((0, ph), (0, pw)), mode="reflect")
+        with self._trava, torch.inference_mode():
+            self._carregar()
+            try:
+                saida = self._inferir(img_p, t_p)
+            except RuntimeError:
+                if self._disp.type == "cpu":
+                    raise
+                self._disp = torch.device("cpu")
+                self._modelo.to(self._disp)
+                saida = self._inferir(img_p, t_p)
+        saida = saida[: img.shape[0], : img.shape[1]]
+        if escala < 1:
+            saida = cv2.resize(saida, (tw, th), interpolation=cv2.INTER_LINEAR)
+        # O modelo só decide dentro da faixa; fora dela vale o que já era certo.
+        fino = np.where(tri_trecho == 128, saida * 255.0, tri_trecho).round().astype(np.uint8)
+        alfa = np.zeros((altura, largura), dtype=np.uint8)
+        alfa[y1:y2, x1:x2] = fino
+        return alfa
+
+
 segmentador = Segmentador()
 destacador = Destacador(segmentador)
+refinador = Refinador()
 inpainter = Inpainter()

@@ -72,13 +72,32 @@ def test_fluxo_remover(cliente):
     assert mascara.shape == (80, 120, 4)
     assert mascara[40, 60, 3] == 255 and mascara[5, 5, 3] == 0
 
-    url = cliente.post(f"{base}/remover").json()["url"]
-    saida = _imagem(cliente.get(url))
+    r = cliente.post(f"{base}/remover", json={"qualidade": "alta"}).json()
+    assert r["tipo"] == "quadro"
+    saida = _imagem(cliente.get(r["url"]))
     assert tuple(saida[40, 60]) == (0, 255, 0)
     assert tuple(saida[2, 2]) == (200, 50, 50)
+    # A linha do tempo guarda o "antes" e serve miniaturas.
+    assert _imagem(cliente.get(r["antes"])).shape == (80, 120, 3)
+    assert max(_imagem(cliente.get(f"{r['url']}?lado=30")).shape[:2]) == 30
+    assert cliente.post(f"{base}/remover", json={"qualidade": "ultra"}).status_code == 400
 
-    nova = cliente.post(f"{base}/continuar").json()
+    nova = cliente.post(f"{r['url']}/continuar").json()
     assert nova["id"] != s["id"] and nova["mascara"] is None
+
+
+def test_borracha_magica_edita_a_imagem_e_desfaz(cliente):
+    s = _abrir(cliente)
+    base = f"/api/sessoes/{s['id']}"
+    traco = {"tipo": "apagar", "raio": 6, "pts": [[30, 40], [60, 40]]}
+    depois = cliente.post(f"{base}/acao", json=traco).json()
+    assert depois["imagem"] != s["imagem"], "a URL muda para o navegador recarregar"
+    assert depois["mascara"] is None, "apagar não mexe na seleção"
+    img = _imagem(cliente.get(depois["imagem"]))
+    assert img[40, 45, 1] > 200 and img[40, 45, 0] < 60  # verde do inpaint falso
+    volta = cliente.post(f"{base}/acao", json={"tipo": "desfazer"}).json()
+    img = _imagem(cliente.get(volta["imagem"]))
+    assert img[40, 45, 0] > 150 and img[40, 45, 1] < 90  # vermelho original
 
 
 def test_fluxo_recortar(cliente):
@@ -108,7 +127,7 @@ def test_assunto_inverter_e_fundo(cliente):
     assert quadro.shape == (80, 120, 3)
     assert tuple(quadro[40, 80]) == (200, 50, 50) and tuple(quadro[5, 5]) == (0, 0, 255)
     # Fundo trocado vale como resultado: dá para continuar editando a partir dele.
-    assert cliente.post(f"{base}/continuar").status_code == 200
+    assert cliente.post(f"{r['url']}/continuar").status_code == 200
 
     assert cliente.post(f"{base}/recortar", json={"fundo": "desfoque"}).json()["tipo"] == "quadro"
     assert cliente.post(f"{base}/recortar", json={"fundo": "cor", "cor": "azul"}).status_code == 400
@@ -122,13 +141,14 @@ def test_formatos_de_exportacao(cliente):
     url = cliente.post(f"{base}/recortar", json={"suavizar": 0}).json()["url"]
     tipos = {"png": "image/png", "webp": "image/webp", "jpeg": "image/jpeg"}
     for formato, tipo in tipos.items():
-        r = cliente.get(f"{url}&formato={formato}")
+        r = cliente.get(f"{url}?formato={formato}")
         assert r.headers["content-type"] == tipo
         img = Image.open(io.BytesIO(r.content))
         assert img.size == (40, 30)
         # O WebP descarta o canal alfa quando o recorte é todo opaco, como aqui.
         assert img.mode == {"png": "RGBA", "jpeg": "RGB"}.get(formato, img.mode)
-    assert cliente.get(f"{url}&formato=bmp").status_code == 400
+    assert cliente.get(f"{url}?formato=bmp").status_code == 400
+    assert cliente.post(f"{url}/continuar").status_code == 400  # recorte não vira imagem base
 
 
 def test_expandir_muda_a_url_da_mascara(cliente):

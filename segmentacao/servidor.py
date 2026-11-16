@@ -2,6 +2,7 @@
 
 import io
 import threading
+import uuid
 import webbrowser
 from collections import OrderedDict
 from pathlib import Path
@@ -15,7 +16,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 from . import operacoes as ops
-from .modelos import RAIZ, destacador, inpainter, segmentador
+from .modelos import RAIZ, destacador, inpainter, refinador, segmentador
 from .sessao import Sessao
 
 WEB = Path(__file__).resolve().parent / "web"
@@ -24,10 +25,14 @@ EXEMPLOS = RAIZ / "imagens"
 EXTENSOES = {".jpg", ".jpeg", ".png", ".webp"}
 LADO_MAXIMO = 4096  # imagens maiores são reduzidas ao entrar
 MAX_SESSOES = 4  # cada sessão guarda a imagem inteira na memória
+MAX_RESULTADOS = 8  # tamanho da linha do tempo
 COR_MASCARA = (153, 211, 52)  # emerald-400 em BGR
+# Lado máximo da região enviada ao LaMa: mais pixels, mais detalhe e mais tempo.
+QUALIDADES = {"rapida": 1024, "alta": 1536}
 
 app = FastAPI(title="Segmentação")
 _sessoes: OrderedDict[str, Sessao] = OrderedDict()
+_resultados: OrderedDict[str, dict] = OrderedDict()
 _trava = threading.Lock()
 
 
@@ -61,7 +66,7 @@ def _estado(s: Sessao) -> dict:
         "versao": s.versao,
         "largura": s.largura,
         "altura": s.altura,
-        "imagem": f"{base}/imagem",
+        "imagem": f"{base}/imagem?v={s.versao_img}",
         "mascara": None if s.vazia else f"{base}/mascara?v={s.versao}-{s.expandir}",
         "caixas": s.caixas,
         "pontos": s.pontos,
@@ -90,15 +95,49 @@ FORMATOS = {
 }
 
 
-def _codificar(arr: np.ndarray, formato: str = "png") -> Response:
+def _codificar(arr: np.ndarray, formato: str = "png", lado: int = 0) -> Response:
     if formato not in FORMATOS:
         raise HTTPException(400, "Formato desconhecido. Use png, webp ou jpeg.")
     extensao, tipo, opcoes = FORMATOS[formato]
     if formato == "jpeg":
         arr = ops.para_rgb(arr)  # JPEG não tem transparência: fundo branco
+    if 0 < lado < max(arr.shape[:2]):
+        escala = lado / max(arr.shape[:2])
+        tam = (max(1, round(arr.shape[1] * escala)), max(1, round(arr.shape[0] * escala)))
+        arr = cv2.resize(arr, tam, interpolation=cv2.INTER_AREA)
     conv = cv2.COLOR_RGBA2BGRA if arr.shape[2] == 4 else cv2.COLOR_RGB2BGR
     _, buf = cv2.imencode(extensao, cv2.cvtColor(arr, conv), opcoes)
     return Response(buf.tobytes(), media_type=tipo, headers={"Cache-Control": "no-store"})
+
+
+# ---------- linha do tempo de resultados ----------
+
+
+def _guardar_resultado(arr: np.ndarray, antes: np.ndarray, tipo: str, nome: str) -> dict:
+    """Registra um resultado. ``antes`` é só uma referência à imagem de origem, sem cópia."""
+    rid = uuid.uuid4().hex[:12]
+    with _trava:
+        _resultados[rid] = {"arr": arr, "antes": antes, "tipo": tipo, "nome": nome}
+        while len(_resultados) > MAX_RESULTADOS:
+            _resultados.popitem(last=False)
+    base = f"/api/resultados/{rid}"
+    return {
+        "id": rid,
+        "tipo": tipo,  # "quadro" (imagem inteira) ou "recorte" (objeto com transparência)
+        "nome": nome,
+        "url": base,
+        "antes": f"{base}/antes",
+        "largura": arr.shape[1],
+        "altura": arr.shape[0],
+    }
+
+
+def _resultado(rid: str) -> dict:
+    with _trava:
+        r = _resultados.get(rid)
+    if r is None:
+        raise HTTPException(404, "Esse resultado já saiu da linha do tempo.")
+    return r
 
 
 # ---------- API ----------
@@ -122,10 +161,15 @@ class Expandir(BaseModel):
     px: int
 
 
+class Remover(BaseModel):
+    qualidade: str = "rapida"
+
+
 class Recortar(BaseModel):
     suavizar: int = 1
     fundo: str = "transparente"  # transparente | cor | desfoque
     cor: str = "#ffffff"
+    refinar: bool = False  # recalcula a borda com matting (cabelo, pelos)
 
 
 @app.get("/api/exemplos")
@@ -176,12 +220,21 @@ def mascara(sid: str):
 
 
 @app.post("/api/sessoes/{sid}/acao")
-def acao(sid: str, corpo: Acao) -> dict:
+def acao(sid: str, corpo: Acao, fundo: BackgroundTasks) -> dict:
     s = _sessao(sid)
+    antes = s.img
     try:
-        s.aplicar(corpo.model_dump(exclude_none=True), segmentador.mascara, destacador.mascara)
+        s.aplicar(
+            corpo.model_dump(exclude_none=True),
+            segmentador.mascara,
+            destacador.mascara,
+            inpainter,
+        )
     except (KeyError, ValueError) as erro:
         raise HTTPException(400, f"Ação inválida: {erro}") from erro
+    if s.img is not antes:
+        # A imagem mudou (borracha mágica ou desfazer): recodifica já para o próximo clique.
+        fundo.add_task(segmentador.preparar, s.img)
     return _estado(s)
 
 
@@ -200,19 +253,14 @@ def _mascara_ou_erro(s: Sessao) -> np.ndarray:
 
 
 @app.post("/api/sessoes/{sid}/remover")
-def remover(sid: str) -> dict:
+def remover(sid: str, corpo: Remover | None = None) -> dict:
     s = _sessao(sid)
+    qualidade = corpo.qualidade if corpo else "rapida"
+    if qualidade not in QUALIDADES:
+        raise HTTPException(400, "Qualidade desconhecida. Use rapida ou alta.")
     # A expansão automática cobre sombra e halo; a do usuário já está na máscara.
-    s.saidas["resultado"] = ops.remover(s.img, _mascara_ou_erro(s), inpainter)
-    return {"url": f"/api/sessoes/{sid}/resultado?v={s.versao}-{s.expandir}"}
-
-
-@app.get("/api/sessoes/{sid}/resultado")
-def resultado(sid: str, formato: str = "png"):
-    s = _sessao(sid)
-    if "resultado" not in s.saidas:
-        raise HTTPException(404, "Ainda não há resultado.")
-    return _codificar(s.saidas["resultado"], formato)
+    saida = ops.remover(s.img, _mascara_ou_erro(s), inpainter, lado_max=QUALIDADES[qualidade])
+    return _guardar_resultado(saida, s.img, "quadro", "removido")
 
 
 def _cor(texto: str) -> tuple[int, int, int]:
@@ -228,40 +276,36 @@ def _cor(texto: str) -> tuple[int, int, int]:
 @app.post("/api/sessoes/{sid}/recortar")
 def recortar(sid: str, corpo: Recortar) -> dict:
     s = _sessao(sid)
-    m = _mascara_ou_erro(s)
-    suavizar = int(np.clip(corpo.suavizar, 0, 8))
-    marca = f"{s.versao}-{s.expandir}-{suavizar}-{corpo.fundo}-{corpo.cor.lstrip('#')}"
-    if corpo.fundo == "transparente":
-        rec = ops.recortar(s.img, m, suavizar=suavizar)
-        s.saidas["recorte"] = rec
-        return {
-            "tipo": "recorte",
-            "url": f"/api/sessoes/{sid}/recorte?v={marca}",
-            "largura": rec.shape[1],
-            "altura": rec.shape[0],
-        }
-    if corpo.fundo not in ("cor", "desfoque"):
+    if corpo.fundo not in ("transparente", "cor", "desfoque"):
         raise HTTPException(400, "Fundo desconhecido.")
     cor = _cor(corpo.cor) if corpo.fundo == "cor" else None
-    # Imagem inteira com o fundo trocado: entra como resultado, igual à remoção.
-    s.saidas["resultado"] = ops.trocar_fundo(s.img, m, cor=cor, suavizar=suavizar)
-    return {"tipo": "quadro", "url": f"/api/sessoes/{sid}/resultado?v={marca}"}
+    m = _mascara_ou_erro(s)
+    suavizar = int(np.clip(corpo.suavizar, 0, 8))
+    alfa = refinador.alfa(s.img, m) if corpo.refinar else None
+    if corpo.fundo == "transparente":
+        rec = ops.recortar(s.img, m, suavizar=suavizar, alfa=alfa)
+        return _guardar_resultado(rec, s.img, "recorte", "recorte")
+    # Imagem inteira com o fundo trocado: um "quadro", como a remoção.
+    saida = ops.trocar_fundo(s.img, m, cor=cor, suavizar=suavizar, alfa=alfa)
+    return _guardar_resultado(saida, s.img, "quadro", "fundo-trocado")
 
 
-@app.get("/api/sessoes/{sid}/recorte")
-def recorte(sid: str, formato: str = "png"):
-    s = _sessao(sid)
-    if "recorte" not in s.saidas:
-        raise HTTPException(404, "Ainda não há recorte.")
-    return _codificar(s.saidas["recorte"], formato)
+@app.get("/api/resultados/{rid}")
+def resultado(rid: str, formato: str = "png", lado: int = 0):
+    return _codificar(_resultado(rid)["arr"], formato, lado)
 
 
-@app.post("/api/sessoes/{sid}/continuar")
-def continuar(sid: str, fundo: BackgroundTasks) -> dict:
-    s = _sessao(sid)
-    if "resultado" not in s.saidas:
-        raise HTTPException(404, "Ainda não há resultado para continuar.")
-    return _nova_sessao(s.saidas["resultado"], fundo)
+@app.get("/api/resultados/{rid}/antes")
+def resultado_antes(rid: str):
+    return _codificar(_resultado(rid)["antes"], "jpeg")
+
+
+@app.post("/api/resultados/{rid}/continuar")
+def continuar(rid: str, fundo: BackgroundTasks) -> dict:
+    r = _resultado(rid)
+    if r["tipo"] != "quadro":
+        raise HTTPException(400, "Só dá para continuar editando a partir de uma imagem inteira.")
+    return _nova_sessao(r["arr"], fundo)
 
 
 # ---------- página ----------

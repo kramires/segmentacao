@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=2.0",
     "pillow>=11.0",
     "onnxruntime>=1.20",
+    "transformers>=4.50",
 ]
 
 [project.scripts]
@@ -35,6 +36,9 @@ packages = ["segmentacao"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Não depende do .pth da instalação editável: em pastas sincronizadas pelo iCloud o
+# macOS marca esse arquivo como oculto e o Python passa a ignorá-lo.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100

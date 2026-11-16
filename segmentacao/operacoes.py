@@ -62,13 +62,38 @@ def _alfa(mascara: np.ndarray, suavizar: int) -> np.ndarray:
     return alfa
 
 
-def recortar(img_rgb: np.ndarray, mascara: np.ndarray, suavizar: int = 1) -> np.ndarray | None:
-    """Devolve o objeto em RGBA, já aparado ao seu contorno."""
-    caixa = caixa_da_mascara(mascara > 127)
+def trimapa(mascara: np.ndarray, faixa: int) -> np.ndarray:
+    """Divide a máscara em objeto certo (255), fundo certo (0) e faixa de dúvida (128).
+
+    A faixa, de ``faixa`` pixels para cada lado da borda, é onde um modelo de
+    matting decide a transparência fio a fio.
+    """
+    binaria = np.where(mascara > 127, 255, 0).astype(np.uint8)
+    nucleo = _nucleo(faixa)
+    saida = np.zeros_like(binaria)
+    saida[cv2.dilate(binaria, nucleo) > 0] = 128
+    saida[cv2.erode(binaria, nucleo) > 0] = 255
+    return saida
+
+
+def recortar(
+    img_rgb: np.ndarray,
+    mascara: np.ndarray,
+    suavizar: int = 1,
+    alfa: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Devolve o objeto em RGBA, já aparado ao seu contorno.
+
+    ``alfa`` (uint8, tamanho da imagem) substitui a borda calculada da máscara,
+    por exemplo com a transparência refinada por um modelo de matting.
+    """
+    if alfa is None:
+        alfa = _alfa(mascara, suavizar)
+    caixa = caixa_da_mascara(alfa > 0)
     if caixa is None:
         return None
     x1, y1, x2, y2 = caixa
-    return np.dstack([img_rgb[y1:y2, x1:x2], _alfa(mascara, suavizar)[y1:y2, x1:x2]])
+    return np.dstack([img_rgb[y1:y2, x1:x2], alfa[y1:y2, x1:x2]])
 
 
 def trocar_fundo(
@@ -76,12 +101,15 @@ def trocar_fundo(
     mascara: np.ndarray,
     cor: tuple[int, int, int] | None = None,
     suavizar: int = 1,
+    alfa: np.ndarray | None = None,
 ) -> np.ndarray:
     """Mantém o objeto e troca o fundo: cor sólida, ou o próprio fundo desfocado se ``cor`` é None.
 
     O resultado tem o tamanho da imagem original.
     """
-    alfa = (_alfa(mascara, suavizar).astype(np.float32) / 255.0)[..., None]
+    if alfa is None:
+        alfa = _alfa(mascara, suavizar)
+    alfa = (alfa.astype(np.float32) / 255.0)[..., None]
     if cor is not None:
         fundo = np.empty_like(img_rgb, dtype=np.float32)
         fundo[:] = cor

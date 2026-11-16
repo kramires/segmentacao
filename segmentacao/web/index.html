@@ -83,7 +83,8 @@
             <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="mais" title="Clique para incluir (A)">Ponto +</button>
             <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="menos" title="Clique para excluir (S)">Ponto −</button>
             <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="pincel" title="Pintar seleção (P)">Pincel</button>
-            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="borracha" title="Apagar seleção (E)">Borracha</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="borracha" title="Tirar da seleção (E)">Borracha</button>
+            <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-ferramenta="apagar" title="Borracha mágica: pinte e o objeto some da foto (X)">Apagar</button>
           </div>
           <label id="grupo-pincel" class="invisible flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-forest-400">
             Tamanho
@@ -147,12 +148,23 @@
             <input id="expandir" type="range" min="-40" max="40" value="0" class="w-full mt-2">
             <span class="flex justify-between mt-1 text-[10px] uppercase tracking-wider text-forest-500"><span>Encolher</span><span>Expandir</span></span>
           </label>
+          <div id="grupo-remover">
+            <p class="mt-5 mb-3 text-xs font-medium uppercase tracking-widest text-forest-400">Qualidade</p>
+            <div id="qualidades" class="inline-flex gap-1 p-1.5 bg-forest-900/50 backdrop-blur-sm rounded-full border border-white/10">
+              <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-qualidade="rapida" aria-pressed="true">Rápida</button>
+              <button class="seg rounded-full px-4 py-2 text-sm font-medium" data-qualidade="alta" aria-pressed="false" title="Reconstrói o fundo com mais detalhe; demora mais">Alta</button>
+            </div>
+          </div>
           <div id="grupo-recorte" class="hidden">
             <label class="block mt-5">
               <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
                 Suavizar borda <span id="suavizar-valor" class="font-mono text-forest-300 normal-case">1 px</span>
               </span>
               <input id="suavizar" type="range" min="0" max="6" value="1" class="w-full mt-2">
+            </label>
+            <label class="flex items-center gap-3 mt-5 cursor-pointer" title="Recalcula a transparência da borda fio a fio; substitui o Suavizar">
+              <input id="refinar" type="checkbox" class="w-4 h-4 accent-emerald-400">
+              <span class="text-sm text-forest-100">Refinar borda <span class="text-forest-400">· cabelo e pelos</span></span>
             </label>
             <p class="mt-5 mb-3 text-xs font-medium uppercase tracking-widest text-forest-400">Fundo</p>
             <div class="flex flex-wrap items-center gap-3">
@@ -174,6 +186,8 @@
             <p class="text-xs font-medium uppercase tracking-widest text-forest-400">Resultado</p>
             <span id="resultado-tag" class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded"></span>
           </div>
+          <!-- Linha do tempo: aparece a partir do segundo resultado -->
+          <div id="historia" class="hidden flex gap-2 mb-3 overflow-x-auto no-scrollbar"></div>
           <!-- Antes / depois -->
           <div id="comparador" class="hidden relative rounded-2xl overflow-hidden border border-white/10 select-none">
             <img id="cmp-depois" class="block w-full" alt="Depois">
@@ -215,7 +229,7 @@
         Cole o recorte em <span class="text-emerald-400">outro fundo</span>.
       </h1>
       <p class="mt-4 max-w-2xl text-base tracking-wide text-forest-300 leading-relaxed">
-        Arraste o recorte para posicionar e use a roda do mouse ou o controle para mudar o tamanho.
+        Junte vários recortes em camadas. Arraste para posicionar, use as alças para girar e redimensionar, e ajuste sombra e cor para combinar com o fundo.
       </p>
     </div>
     <div class="grid grid-cols-1 xl:grid-cols-12 gap-5">
@@ -231,19 +245,53 @@
       </div>
       <aside class="xl:col-span-4">
         <div class="bg-forest-900/20 border border-white/5 rounded-3xl p-5 md:p-6">
-          <p class="text-xs font-medium uppercase tracking-widest text-forest-400 mb-3">Recorte atual</p>
-          <div class="xadrez rounded-2xl border border-white/10 p-3 h-40 flex items-center justify-center">
-            <img id="mini-recorte" class="max-h-full max-w-full hidden" alt="Recorte">
-            <span id="sem-recorte" class="text-sm text-forest-400">Faça um recorte no Editor primeiro.</span>
+          <p class="text-xs font-medium uppercase tracking-widest text-forest-400 mb-3">Adicionar camada</p>
+          <div class="flex items-center gap-3">
+            <div id="recortes-disponiveis" class="flex gap-2 overflow-x-auto no-scrollbar"></div>
+            <span id="sem-recorte" class="text-sm text-forest-400">Nenhum recorte ainda. Faça um no Editor ou envie uma imagem.</span>
           </div>
-          <label class="block mt-6">
-            <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
-              Tamanho <span id="escala-valor" class="font-mono text-forest-300 normal-case">100%</span>
-            </span>
-            <input id="escala" type="range" min="5" max="300" value="100" class="w-full mt-2">
-          </label>
+          <button id="btn-add-imagem" class="mt-3 w-full py-3 rounded-xl border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Enviar imagem (PNG com transparência)</button>
+          <input id="arquivo-camada" type="file" accept="image/*" class="hidden">
+
+          <p id="titulo-camadas" class="hidden mt-6 mb-2 text-xs font-medium uppercase tracking-widest text-forest-400">Camadas</p>
+          <div id="lista-camadas" class="flex flex-col gap-1"></div>
+
+          <div id="controles-camada" class="hidden mt-5 pt-5 border-t border-white/5">
+            <label class="block">
+              <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+                Tamanho <span id="escala-valor" class="font-mono text-forest-300 normal-case">100%</span>
+              </span>
+              <input id="escala" type="range" min="2" max="300" value="100" class="w-full mt-2">
+            </label>
+            <label class="block mt-4">
+              <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+                Girar <span id="girar-valor" class="font-mono text-forest-300 normal-case">0°</span>
+              </span>
+              <input id="girar" type="range" min="-180" max="180" value="0" class="w-full mt-2">
+            </label>
+            <label class="block mt-4">
+              <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+                Sombra <span id="sombra-valor" class="font-mono text-forest-300 normal-case">0%</span>
+              </span>
+              <input id="sombra" type="range" min="0" max="100" value="0" class="w-full mt-2">
+            </label>
+            <label class="block mt-4" title="Puxa as cores da camada na direção das cores do fundo">
+              <span class="flex justify-between text-xs font-medium uppercase tracking-widest text-forest-400">
+                Combinar cor com o fundo <span id="cor-camada-valor" class="font-mono text-forest-300 normal-case">0%</span>
+              </span>
+              <input id="cor-camada" type="range" min="0" max="100" value="0" class="w-full mt-2">
+            </label>
+            <div class="mt-5 grid grid-cols-2 gap-3">
+              <button id="btn-espelhar" class="seg py-2.5 rounded-full border !border-white/10 text-sm font-medium" aria-pressed="false">Espelhar</button>
+              <button id="btn-duplicar" class="py-2.5 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Duplicar</button>
+            </div>
+          </div>
+
           <button id="btn-baixar-colagem" class="mt-6 w-full shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all duration-300 font-medium text-emerald-950 bg-gradient-to-r from-[#d1fae5] to-[#34d399] rounded-xl py-4 disabled:opacity-40 disabled:pointer-events-none" disabled>Baixar colagem</button>
-          <button id="btn-trocar-fundo" class="mt-3 w-full py-3 rounded-xl border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Trocar fundo</button>
+          <div class="mt-3 grid grid-cols-2 gap-3">
+            <button id="btn-copiar-colagem" class="py-3 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300 disabled:opacity-30 disabled:pointer-events-none" disabled>Copiar</button>
+            <button id="btn-trocar-fundo" class="py-3 rounded-full border border-white/10 text-sm font-medium hover:bg-white hover:text-forest-950 transition-all duration-300">Trocar fundo</button>
+          </div>
         </div>
       </aside>
     </div>
@@ -254,5 +302,6 @@
 <div id="aviso" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-forest-950/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-sm text-forest-100"></div>
 
 <script src="/web/app.js"></script>
+<script src="/web/colagem.js"></script>
 </body>
 </html>

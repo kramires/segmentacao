@@ -4,12 +4,13 @@ App local para segmentar objetos em fotos e, a partir da seleção, **remover**,
 
 - Segmentação: SAM 2.1 (Hiera Small), baixado do Hugging Face na primeira execução.
 - Selecionar assunto: U2-Net-p localiza os objetos e o SAM 2.1 faz a borda; baixado para `checkpoints/` na primeira execução.
-- Remoção: LaMa (big-lama), baixado para `checkpoints/` na primeira execução.
+- Refinar borda (cabelo e pelos): ViTMatte small, baixado do Hugging Face no primeiro uso.
+- Remoção e borracha mágica: LaMa (big-lama), baixado para `checkpoints/` na primeira execução.
 
 ## Rodar
 
 ```bash
-uv run segmentacao
+uv run python -m segmentacao
 ```
 
 Imagens colocadas na pasta `imagens/` (não versionada) aparecem como exemplos na tela inicial.
@@ -37,7 +38,7 @@ uv run pytest
 |---|---|
 | Roda do mouse / pinça | Zoom no ponto do cursor |
 | Espaço + arrastar | Mover a imagem |
-| `M` `C` `A` `S` `P` `E` | Mover, Caixa, Ponto +, Ponto −, Pincel, Borracha |
+| `M` `C` `A` `S` `P` `E` `X` | Mover, Caixa, Ponto +, Ponto −, Pincel, Borracha, Apagar |
 | `[` `]` | Tamanho do pincel |
 | `0` / `1` | Ajustar à tela / tamanho real |
 | `I` | Inverter a seleção |
